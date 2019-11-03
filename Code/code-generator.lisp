@@ -33,8 +33,8 @@
     (symbol code)
     (number code)
     (list
-     (destructuring-bind (function &rest arguments) code
-       (let ((arguments (mapcar #'stagger-operators arguments)))
+     (let ((code (mapcar #'stagger-operators code)))
+       (destructuring-bind (function &rest arguments) code
          (if (member function '(+ - * /))
              (case (length arguments)
                (0 (ecase function
@@ -66,24 +66,25 @@
        (push (compile-store-instruction instruction) compiled-instructions))
      kernel)
     (make-gpu-code :arrays (alexandria:hash-table-alist *array-variables*)
-                     :code `(let ,(loop for range in (rest *ranges*)
-                                        for index from 0
-                                        collect `(,range (oclcl.lang:to-int (oclcl.lang:get-global-id ,index))))
-                              ,@compiled-instructions)
-                     :ranges (rest *ranges*)
-                     :reduction-size *reduction-size*)))
+                   :code `(let ,(loop for range in (rest *ranges*)
+                                      for index from 0
+                                      collect `(,range (oclcl.lang:to-int (oclcl.lang:get-global-id ,index))))
+                            ,@compiled-instructions)
+                   :ranges (rest *ranges*)
+                   :reduction-size *reduction-size*)))
 
-(defun gpu-code->oclcl-code (kernel)
+(defun gpu-code->oclcl-code (gpu-code)
   (let ((oclcl:*program* (oclcl:make-program :name "Petalisp program")))
     (oclcl:program-define-function oclcl:*program*
                                    'kernel
                                    'oclcl:void
-                                   (loop for (id storage size) in (gpu-code-arrays kernel)
-                                         collect (list storage 'oclcl:float*)
-                                         collect (list size 'oclcl:int*))
-                                   (list (stagger-operators (gpu-code-code kernel))))
+                                   (cons (list (gpu-code-reduction-size gpu-code) 'oclcl:int)
+                                         (loop for (id storage size) in (gpu-code-arrays gpu-code)
+                                               collect (list storage 'oclcl:float*)
+                                               collect (list size 'oclcl:int*)))
+                                   (list (stagger-operators (gpu-code-code gpu-code))))
     (make-oclcl-info :program (oclcl:compile-program oclcl:*program*)
-                     :load-instructions (remove :output (mapcar #'first (gpu-code-arrays kernel))))))
+                     :load-instructions (remove :output (mapcar #'first (gpu-code-arrays gpu-code))))))
                                          
 
 (defmacro with-input ((instruction input) &body body)
@@ -104,7 +105,7 @@
                 (compile-inner-instruction input))))
     `(let ((,result!g ,(subst (petalisp:range-start reduction-space) (first *ranges*) body)))
        (do ((,(first *ranges*) ,(1+ (petalisp:range-start reduction-space)) (+ ,(first *ranges*) 1)))
-           ((> ,(first *ranges*) *reduction-size*))
+           ((> ,(first *ranges*) ,*reduction-size*))
          (set ,result!g (,(petalisp.ir:reduce-instruction-operator reduce-instruction)
                          ,result!g ,body)))
        (set ,(array-ref :output (transform-by-instruction *ranges* store-instruction))
