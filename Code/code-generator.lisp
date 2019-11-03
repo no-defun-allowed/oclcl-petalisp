@@ -35,19 +35,29 @@
     (list
      (let ((code (mapcar #'stagger-operators code)))
        (destructuring-bind (function &rest arguments) code
-         (if (member function '(+ - * /))
-             (case (length arguments)
-               (0 (ecase function
-                    ((member / -) (error "~s is not defined for zero arguments" function))
-                    ((+) 0)
-                    ((*) 1)))
-               (1 (if (eql function '/)
-                      `(/ 1.0 ,(first arguments))
-                      (first arguments)))
-               (2 (cons function arguments))
-               (t (reduce (lambda (a b) (list function a b))
-                          arguments :from-end t)))
-             (cons function arguments)))))))
+         (case function
+           ((+ - * /)
+            (case (length arguments)
+              (0 (ecase function
+                   ((member / -) (error "~s is not defined for zero arguments" function))
+                   ((+) 0)
+                   ((*) 1)))
+              (1 (if (eql function '/)
+                     `(/ 1.0 ,(first arguments))
+                     (first arguments)))
+              (2 (cons function arguments))
+              (t (reduce (lambda (a b) (list function a b))
+                         arguments :from-end t))))
+           ((1+)
+            (destructuring-bind (1+ number) code
+              (declare (ignore 1+))
+              `(+ ,number 1)))
+           ((1-)
+            (destructuring-bind (1- number) code
+              (declare (ignore 1-))
+              `(- ,number 1)))
+           (t
+            (cons function arguments))))))))
 
 (defun kernel->gpu-code (kernel)
   (let* ((compiled-instructions '())
@@ -143,7 +153,15 @@
 
 (defun function-name (function)
   (etypecase function
-    (symbol function)
+    (symbol
+     (if (eq (symbol-package function)
+             (find-package "PETALISP.TYPE-INFERENCE"))
+         (let ((name (symbol-name function)))
+           (cond
+             ((alexandria:starts-with-subseq "SHORT-FLOAT" name)
+              (intern (subseq name 11) "CL"))
+             (t (error "unknown type-inference symbol ~s" function))))
+         function))
     (function
      (multiple-value-bind (expression closure? name)
          (function-lambda-expression function)

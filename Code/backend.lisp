@@ -72,8 +72,7 @@
                                   (petalisp:shape-ranges
                                    (petalisp.ir:buffer-shape buffer))))
               (storage (make-array dimensions
-                                   :element-type 'null
-                                   :initial-element nil)))
+                                   :element-type 'nil)))
          (setf (petalisp.ir:buffer-storage buffer)
                storage
                (gethash storage *gpu-storage-table*)
