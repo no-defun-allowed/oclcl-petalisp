@@ -4,5 +4,5 @@
                (:file "device-picker")
                (:file "code-generator")
                (:file "gpu-array")
-               (:file "run-gpu-kernel")
-               (:file "backend")))
+               (:file "backend")
+               (:file "run-gpu-kernel")))

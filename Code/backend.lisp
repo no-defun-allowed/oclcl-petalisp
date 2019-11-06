@@ -18,7 +18,7 @@
 
 (defgeneric compile-kernel (backend kernel)
   (:method ((backend oclcl-backend) kernel)
-    (format *debug-io* "~&Compiling ~s...~%" kernel)
+    (format *debug-io* "~&Compiling ~s...~%" (petalisp.ir:kernel-blueprint kernel))
     (let* ((gpu-code (kernel->gpu-code kernel))
            (oclcl-code (gpu-code->oclcl-code gpu-code))
            (program (eazy-opencl.host:create-program-with-source

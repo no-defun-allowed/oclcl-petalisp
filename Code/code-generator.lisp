@@ -75,13 +75,18 @@
      (lambda (instruction)
        (push (compile-store-instruction instruction) compiled-instructions))
      kernel)
-    (make-gpu-code :arrays (alexandria:hash-table-alist *array-variables*)
-                   :code `(let ,(loop for range in (rest *ranges*)
-                                      for index from 0
-                                      collect `(,range (oclcl.lang:to-int (oclcl.lang:get-global-id ,index))))
-                            ,@compiled-instructions)
-                   :ranges (rest *ranges*)
-                   :reduction-size *reduction-size*)))
+    (let ((arrays (alexandria:hash-table-alist *array-variables*)))
+      ;; Ensure that the output buffer is first
+      (make-gpu-code :arrays (cons (find :output arrays :key #'first)
+                                   (remove :output arrays :key #'first))
+                     :code `(let ,(loop for range in (rest *ranges*)
+                                        for index from 0
+                                        collect `(,range
+                                                  (oclcl.lang:to-int
+                                                   (oclcl.lang:get-global-id ,index))))
+                              ,@compiled-instructions)
+                     :ranges (rest *ranges*)
+                     :reduction-size *reduction-size*))))
 
 (defun gpu-code->oclcl-code (gpu-code)
   (let ((oclcl:*program* (oclcl:make-program :name "Petalisp program")))
@@ -116,7 +121,8 @@
     `(let ((,result!g ,(subst (petalisp:range-start reduction-space) (first *ranges*) body)))
        (do ((,(first *ranges*) ,(1+ (petalisp:range-start reduction-space)) (+ ,(first *ranges*) 1)))
            ((> ,(first *ranges*) ,*reduction-size*))
-         (set ,result!g (,(petalisp.ir:reduce-instruction-operator reduce-instruction)
+         (set ,result!g (,(function-name
+                           (petalisp.ir:reduce-instruction-operator reduce-instruction))
                          ,result!g ,body)))
        (set ,(array-ref :output (transform-by-instruction *ranges* store-instruction))
             ,result!g))))

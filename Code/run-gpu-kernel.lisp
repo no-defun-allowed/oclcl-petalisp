@@ -15,6 +15,15 @@
      kernel)
     (sort instructions #'< :key #'petalisp.ir:instruction-number)))
 
+(defun set-kernel-array (kernel id gpu-array)
+  (let ((position (+ 3 (* id 2))))
+    (eazy-opencl.host:set-kernel-arg kernel position
+                                     (gpu-array-storage gpu-array)
+                                     '%ocl:mem)
+    (eazy-opencl.host:set-kernel-arg kernel (1+ position)
+                                     (gpu-array-gpu-dimensions gpu-array)
+                                     '%ocl:mem)))
+
 (defgeneric execute-gpu-kernel (backend gpu-kernel kernel)
   (:method ((backend oclcl-backend) gpu-kernel kernel)
     (let* ((queue (oclcl-queue backend))
@@ -32,12 +41,7 @@
       (eazy-opencl.host:set-kernel-arg opencl-kernel 0
                                        (petalisp:range-size (first ranges))
                                        '%ocl:int)
-      (eazy-opencl.host:set-kernel-arg opencl-kernel 1
-                                       (gpu-array-storage gpu-array)
-                                       '%ocl:mem)
-      (eazy-opencl.host:set-kernel-arg opencl-kernel 2
-                                       (gpu-array-gpu-dimensions gpu-array)
-                                       '%ocl:mem)
+      (set-kernel-array opencl-kernel -1 gpu-array)
       (loop for load-instruction-number in (gpu-kernel-load-instructions gpu-kernel)
             for load-instruction = (find load-instruction-number
                                          load-instructions
@@ -49,14 +53,8 @@
                                 (array->gpu-array
                                  backend
                                  (petalisp.ir:buffer-storage load-buffer)))
-            for storage-position from 3 by 2
-              for size-position    = (1+ storage-position)
-            do (eazy-opencl.host:set-kernel-arg opencl-kernel storage-position
-                                                (gpu-array-storage gpu-array)
-                                                '%ocl:mem)
-               (eazy-opencl.host:set-kernel-arg opencl-kernel size-position
-                                                (gpu-array-gpu-dimensions gpu-array)
-                                                '%ocl:mem))
+            for id from 0
+            do (set-kernel-array opencl-kernel id gpu-array))
       (let ((iteration-ranges (rest ranges)))
         (cffi:with-foreign-array (work '%ocl:size-t
                                        (or (mapcar #'petalisp:range-size iteration-ranges)
