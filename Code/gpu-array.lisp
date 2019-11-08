@@ -41,7 +41,7 @@
   (cffi:with-foreign-object (foreign-memory :float (array-total-size array))
     (dotimes (index (array-total-size array))
       (setf (cffi:mem-aref foreign-memory :float index)
-            (row-major-aref array index)))
+            (coerce (row-major-aref array index) 'single-float)))
     (make-gpu-array backend (array-dimensions array) foreign-memory)))
     
 
