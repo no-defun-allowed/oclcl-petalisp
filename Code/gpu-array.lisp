@@ -60,3 +60,9 @@
         (setf (row-major-aref array index)
               (cffi:mem-aref foreign-memory :float index)))
       array)))
+
+(defmethod print-object ((gpu-array gpu-array) stream)
+  (print-unreadable-object (gpu-array stream :type t :identity t)
+    (format stream ":dimensions ~s :storage ~s"
+            (gpu-array-dimensions gpu-array)
+            (gpu-array->array gpu-array))))

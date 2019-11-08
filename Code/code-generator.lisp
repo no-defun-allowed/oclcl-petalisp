@@ -120,7 +120,7 @@
                 (compile-inner-instruction input))))
     `(let ((,result!g ,(subst (petalisp:range-start reduction-space) (first *ranges*) body)))
        (do ((,(first *ranges*) ,(1+ (petalisp:range-start reduction-space)) (+ ,(first *ranges*) 1)))
-           ((> ,(first *ranges*) ,*reduction-size*))
+           ((= ,(first *ranges*) ,*reduction-size*))
          (set ,result!g (,(function-name
                            (petalisp.ir:reduce-instruction-operator reduce-instruction))
                          ,result!g ,body)))

@@ -38,9 +38,10 @@
            (ranges
              (petalisp:shape-ranges
               (petalisp.ir:kernel-iteration-space kernel))))
-      (eazy-opencl.host:set-kernel-arg opencl-kernel 0
-                                       (petalisp:range-size (first ranges))
-                                       '%ocl:int)
+      (let ((reduction-size (petalisp:range-size (first ranges))))
+        (eazy-opencl.host:set-kernel-arg opencl-kernel 0
+                                         reduction-size
+                                         '%ocl:int))
       (set-kernel-array opencl-kernel -1 gpu-array)
       (loop for load-instruction-number in (gpu-kernel-load-instructions gpu-kernel)
             for load-instruction = (find load-instruction-number
