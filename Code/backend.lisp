@@ -19,15 +19,16 @@
 (defgeneric compile-kernel (backend kernel)
   (:method ((backend oclcl-backend) kernel)
     (format *debug-io* "~&Compiling ~s...~%" (petalisp.ir:kernel-blueprint kernel))
-    (let* ((gpu-code (kernel->gpu-code kernel))
-           (oclcl-code (gpu-code->oclcl-code gpu-code))
-           (program (eazy-opencl.host:create-program-with-source
-                    (oclcl-context backend)
-                    (oclcl-info-program oclcl-code))))
-      (eazy-opencl.host:build-program program)
-      (make-gpu-kernel :program program
-                       :load-instructions
-                       (oclcl-info-load-instructions oclcl-code)))))
+    (with-standard-io-syntax 
+      (let* ((gpu-code (kernel->gpu-code kernel))
+             (oclcl-code (gpu-code->oclcl-code gpu-code))
+             (program (eazy-opencl.host:create-program-with-source
+                       (oclcl-context backend)
+                       (oclcl-info-program oclcl-code))))
+        (eazy-opencl.host:build-program program)
+        (make-gpu-kernel :program program
+                         :load-instructions
+                         (oclcl-info-load-instructions oclcl-code))))))
 
 (defgeneric find-kernel (backend kernel)
   (:documentation "Find a GPU kernel that will run the code in the kernel KERNEL.")
