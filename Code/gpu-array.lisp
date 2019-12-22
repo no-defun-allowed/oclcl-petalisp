@@ -27,10 +27,15 @@
                                  foreign-dimensions
                                  0 (cffi:null-pointer) (cffi:null-pointer))
       ;; Write foreign-storage if we have any to storage-buffer
-      (unless (null foreign-storage)
-        (%ocl:enqueue-write-buffer queue storage-device %ocl:true
-                                   0 (* *float-size* size) foreign-storage
-                                   0 (cffi:null-pointer) (cffi:null-pointer)))
+      (if (not (null foreign-storage))
+          (%ocl:enqueue-write-buffer queue storage-device %ocl:true
+                                     0 (* *float-size* size) foreign-storage
+                                     0 (cffi:null-pointer) (cffi:null-pointer))
+          #-oclcl-petalisp/do-not-zero
+          (cffi:with-foreign-array (foreign-storage :float (make-array size :initial-element 0.0s0))
+            (%ocl:enqueue-write-buffer queue storage-device %ocl:true
+                                       0 (* *float-size* size) foreign-storage
+                                       0 (cffi:null-pointer) (cffi:null-pointer))))
       (%ocl:finish queue))
     (%make-gpu-array :backend backend
                      :storage storage-device
@@ -63,6 +68,6 @@
 
 (defmethod print-object ((gpu-array gpu-array) stream)
   (print-unreadable-object (gpu-array stream :type t :identity t)
-    (format stream ":dimensions ~s :storage ~s"
+    (format stream "~_:Dimensions ~s ~_:Storage ~s"
             (gpu-array-dimensions gpu-array)
             (gpu-array->array gpu-array))))

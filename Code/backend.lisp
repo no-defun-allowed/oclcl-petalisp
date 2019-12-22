@@ -18,7 +18,8 @@
 
 (defgeneric compile-kernel (backend kernel)
   (:method ((backend oclcl-backend) kernel)
-    (format *debug-io* "~&Compiling ~s...~%" (petalisp.ir:kernel-blueprint kernel))
+    ;; Surprisingly, compiling these things isn't too slow. We don't need this message.
+    ;; (format *debug-io* "~&Compiling ~s...~%" (petalisp.ir:kernel-blueprint kernel))
     (with-standard-io-syntax 
       (let* ((gpu-code (kernel->gpu-code kernel))
              (oclcl-code (gpu-code->oclcl-code gpu-code))

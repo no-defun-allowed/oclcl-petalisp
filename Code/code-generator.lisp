@@ -15,17 +15,22 @@
         (list (alexandria:format-symbol nil "STORAGE~a" id)
               (alexandria:format-symbol nil "SIZE~a" id))))
 
+(defun row-major-index (size subscripts)
+  "Generate the code required to get the row-major position of the subscripts for an array of the given size.
+This implentation is based on the \"possible definition\" in http://www.lispworks.com/documentation/HyperSpec/Body/f_ar_row.htm"
+  (cons '+
+        (maplist (lambda (x y)
+                   (list* '* (first x) (rest y)))
+                 subscripts
+                 (loop for subscript in subscripts
+                       for size-subscript from 0
+                       collect `(aref ,size ,size-subscript)))))
+              
+
 (defun array-ref (array subscripts)
   (destructuring-bind (storage size)
       (gethash array *array-variables*)
-    `(aref ,storage
-           (+ ,@(loop for subscript on subscripts
-                      for subscript-number from 0
-                      collect `(* ,(first subscript)
-                                  ,@(loop for size-subscript
-                                          from subscript-number
-                                            below (1- (length subscripts))
-                                          collect `(aref ,size ,size-subscript))))))))
+    `(aref ,storage ,(row-major-index size subscripts))))
 
 (defun stagger-operators (code)
   "Convert some code to always use 2 arguments for operators such as +, which take any number of arguments in CL, but don't in oclcl."
@@ -155,7 +160,7 @@
               collect (with-input (input input)
                         (compile-inner-instruction input)))))
   (:method ((iref petalisp.ir:iref-instruction))
-    (first (transform-by-instruction *ranges* iref))))
+    `(oclcl.lang:to-float ,(first (transform-by-instruction *ranges* iref)))))
 
 (defun function-name (function)
   (etypecase function

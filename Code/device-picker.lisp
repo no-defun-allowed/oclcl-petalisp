@@ -8,7 +8,8 @@
 		   (eazy-opencl.host:get-platform-info platform :platform-name)
 		   (eazy-opencl.host:get-platform-info platform :platform-vendor)
 		   (eazy-opencl.host:get-platform-info platform :platform-version))
-           (list-devices platform n)))
+           (list-devices platform n))
+  (values))
 
 (defun list-devices (platform n)
   (loop for device in (eazy-opencl.host:get-device-ids platform :device-type-default)
@@ -18,7 +19,8 @@
 		   (eazy-opencl.host:get-device-info device :device-name)
 		   (eazy-opencl.host:get-device-info device :device-max-clock-frequency)
 		   (round (eazy-opencl.host:get-device-info device :device-global-mem-size)
-			  #.(expt 2 20)))))
+			  #.(expt 2 20))))
+  (values))
 
 (defun choose-device (platform-n)
   (let* ((platform (elt (eazy-opencl.host:get-platform-ids) platform-n))
