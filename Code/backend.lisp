@@ -84,12 +84,12 @@
          (remhash (petalisp.ir:buffer-storage buffer) *gpu-storage-table*)
          (setf (petalisp.ir:buffer-storage buffer) nil))))))
 
-(defmethod petalisp.core:coerce-to-lazy-array :around ((array array))
+(defmethod petalisp.core:lazy-array :around ((array array))
   (if *running-in-oclcl*
       (let ((gpu-array (gethash array *gpu-storage-table*)))
         (if (null gpu-array)
             (call-next-method)
-            (petalisp.core:coerce-to-lazy-array
+            (petalisp.core:lazy-array
              (gpu-array->array gpu-array))))
       (let ((*running-in-oclcl* nil))
         (call-next-method))))
