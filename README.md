@@ -23,6 +23,7 @@ Cloning eazy-opencl into `~/quicklisp/local-projects` will allow you to load it 
   This might have to do with how eazy-opencl deals with device memory, and how it depends on
   finalisers which a garbage collector with little work to do will seldom run. It is also
   unclear how to manually free said device memory.
-- Reduction is supposed to occur over a binary tree, instead of linearly like CL:REDUCE.
+- ~~Reduction is supposed to occur over a binary tree, instead of linearly like CL:REDUCE.
   In "concrete" terms, this means we should compute `f(f(x1, x2), f(x3, x4))` instead of
-  `f(f(f(x1, x2), x3), x4)`, for a function `f` and values `x1` through `x4`.
+  `f(f(f(x1, x2), x3), x4)`, for a function `f` and values `x1` through `x4`.~~ haha no
+  🦎REDUCTIONS🦎ARE🦎GONE🦎🦎🦎

@@ -84,7 +84,7 @@ This implentation is based on the \"possible definition\" in http://www.lispwork
       ;; Ensure that the output buffer is first
       (make-gpu-code :arrays (cons (find :output arrays :key #'first)
                                    (remove :output arrays :key #'first))
-                     :code `(let ,(loop for range in (rest *ranges*)
+                     :code `(let ,(loop for range in *ranges*
                                         for index from 0
                                         collect `(,range
                                                   (oclcl.lang:to-int
@@ -98,10 +98,9 @@ This implentation is based on the \"possible definition\" in http://www.lispwork
     (oclcl:program-define-function oclcl:*program*
                                    'kernel
                                    'oclcl:void
-                                   (cons (list (gpu-code-reduction-size gpu-code) 'oclcl:int)
-                                         (loop for (id storage size) in (gpu-code-arrays gpu-code)
-                                               collect (list storage 'oclcl:float*)
-                                               collect (list size 'oclcl:int*)))
+                                   (loop for (id storage size) in (gpu-code-arrays gpu-code)
+                                         collect (list storage 'oclcl:float*)
+                                         collect (list size 'oclcl:int*))
                                    (list (stagger-operators (gpu-code-code gpu-code))))
     (make-oclcl-info :program (oclcl:compile-program oclcl:*program*)
                      :load-instructions (remove :output (mapcar #'first (gpu-code-arrays gpu-code))))))
@@ -117,21 +116,6 @@ This implentation is based on the \"possible definition\" in http://www.lispwork
   (petalisp:transform input
                       (petalisp.ir:instruction-transformation instruction)))
 
-(defun compile-reduce-store (reduce-instruction store-instruction)
-  "Compile a REDUCE-INSTRUCTION that has to be reduced over."
-  (let ((reduction-space (first (petalisp:shape-ranges *iteration-space*)))
-        (result!g (make-symbol "RESULT"))
-        (body (with-input (input (first (petalisp.ir:instruction-inputs reduce-instruction)))
-                (compile-inner-instruction input))))
-    `(let ((,result!g ,(subst (petalisp:range-start reduction-space) (first *ranges*) body)))
-       (do ((,(first *ranges*) ,(1+ (petalisp:range-start reduction-space)) (+ ,(first *ranges*) 1)))
-           ((= ,(first *ranges*) ,*reduction-size*))
-         (set ,result!g (,(function-name
-                           (petalisp.ir:reduce-instruction-operator reduce-instruction))
-                         ,result!g ,body)))
-       (set ,(array-ref :output (transform-by-instruction *ranges* store-instruction))
-            ,result!g))))
-
 (defun compile-normal-store (instruction store-instruction)
   `(set ,(array-ref :output (transform-by-instruction *ranges* store-instruction))
         ,(compile-inner-instruction instruction)))
@@ -141,14 +125,7 @@ This implentation is based on the \"possible definition\" in http://www.lispwork
   "Compile a STORE-INSTRUCTION that may contain a reduction."
   (let ((input (first (petalisp.ir:instruction-inputs instruction))))
     (with-input (input input)
-      (if (petalisp.ir:reduce-instruction-p input)
-          ;; If the size of the first range is one, then this reduction is useless.
-          (if (< 1 (petalisp:range-size
-                    (first (petalisp:shape-ranges *iteration-space*))))
-              (compile-reduce-store input instruction)
-              (with-input (input (first (petalisp.ir:instruction-inputs input)))
-                (compile-normal-store input instruction)))
-          (compile-normal-store input instruction)))))
+      (compile-normal-store input instruction))))
 
 (defgeneric compile-inner-instruction (instruction)
   (:method ((load petalisp.ir:load-instruction))

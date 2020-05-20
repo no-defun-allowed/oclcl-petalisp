@@ -16,7 +16,7 @@
     (sort instructions #'< :key #'petalisp.ir:instruction-number)))
 
 (defun set-kernel-array (kernel id gpu-array)
-  (let ((position (+ 3 (* id 2))))
+  (let ((position (+ 2 (* id 2))))
     (eazy-opencl.host:set-kernel-arg kernel position
                                      (gpu-array-storage gpu-array)
                                      '%ocl:mem)
@@ -38,10 +38,6 @@
            (ranges
              (petalisp:shape-ranges
               (petalisp.ir:kernel-iteration-space kernel))))
-      (let ((reduction-size (petalisp:range-size (first ranges))))
-        (eazy-opencl.host:set-kernel-arg opencl-kernel 0
-                                         reduction-size
-                                         '%ocl:int))
       (set-kernel-array opencl-kernel -1 gpu-array)
       (loop for load-instruction-number in (gpu-kernel-load-instructions gpu-kernel)
             for load-instruction = (find load-instruction-number
@@ -56,7 +52,7 @@
                                  (petalisp.ir:buffer-storage load-buffer)))
             for id from 0
             do (set-kernel-array opencl-kernel id gpu-array))
-      (let ((iteration-ranges (rest ranges)))
+      (let ((iteration-ranges ranges))
         (cffi:with-foreign-array (work '%ocl:size-t
                                        (or (mapcar #'petalisp:range-size iteration-ranges)
                                            (list 1)))
