@@ -58,41 +58,25 @@
                         (find-kernel backend kernel)
                         kernel)))
 
-(defmethod petalisp.core:compute-immediates ((lazy-arrays list) (backend oclcl-backend))
-  (let ((*gpu-storage-table* (make-hash-table))
-        (*running-in-oclcl* t))
-    (petalisp.scheduler:schedule-on-workers
-     lazy-arrays
-     1
-     (lambda (tasks)
-       (loop for task in tasks
-             for kernel = (petalisp.scheduler:task-kernel task)
-             do (execute-kernel backend kernel)))
-     (constantly nil)
-     (lambda (buffer)
-       (let* ((dimensions (mapcar #'petalisp:range-size
-                                  (petalisp:shape-ranges
-                                   (petalisp.ir:buffer-shape buffer))))
-              (storage (make-array dimensions
-                                   :element-type 'nil)))
-         (setf (petalisp.ir:buffer-storage buffer)
-               storage
-               (gethash storage *gpu-storage-table*)
-               (make-gpu-array backend dimensions))))
-     (lambda (buffer)
-       (unless (null (petalisp.ir:buffer-storage buffer))
-         (remhash (petalisp.ir:buffer-storage buffer) *gpu-storage-table*)
-         (setf (petalisp.ir:buffer-storage buffer) nil))))))
+(defmethod petalisp.core:backend-compute ((backend oclcl-backend) (lazy-arrays list))
+  (petalisp.scheduler:schedule-on-workers
+   lazy-arrays
+   1
+   (lambda (tasks)
+     (loop for task in tasks
+           for kernel = (petalisp.scheduler:task-kernel task)
+           do (execute-kernel backend kernel)))
+   (constantly nil)
+   (lambda (buffer)
+     (let* ((dimensions (mapcar #'petalisp:range-size
+                                (petalisp:shape-ranges
+                                 (petalisp.ir:buffer-shape buffer)))))
+       (setf (petalisp.ir:buffer-storage buffer)
+             (make-gpu-array backend dimensions))))
+   (lambda (buffer)
+     (unless (null (petalisp.ir:buffer-storage buffer))
+       (setf (petalisp.ir:buffer-storage buffer) nil)))))
 
-(defmethod petalisp.core:lazy-array :around ((array array))
-  (if *running-in-oclcl*
-      (let ((gpu-array (gethash array *gpu-storage-table*)))
-        (if (null gpu-array)
-            (call-next-method)
-            (petalisp.core:lazy-array
-             (gpu-array->array gpu-array))))
-      (let ((*running-in-oclcl* nil))
-        (call-next-method))))
-
-(defmethod petalisp.core:lisp-datum-from-immediate ((gpu-array gpu-array))
-  (gpu-array->array gpu-array)) 
+(defmethod petalisp.core:lazy-array ((array gpu-array))
+  (petalisp.core:lazy-array
+   (gpu-array->array array)))

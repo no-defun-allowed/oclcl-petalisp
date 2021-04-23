@@ -5,15 +5,17 @@
 (defvar *ranges*)
 (defvar *array-variables*)
 (defvar *reduction-size*)
+(defvar *array-id-counter*)
 
 (defstruct gpu-code ranges code arrays reduction-size)
 (defstruct oclcl-info program load-instructions)
 (defstruct gpu-kernel program load-instructions)
 
-(defun add-array (id)
-  (setf (gethash id *array-variables*)
-        (list (alexandria:format-symbol nil "STORAGE~a" id)
-              (alexandria:format-symbol nil "SIZE~a" id))))
+(defun add-array (buffer)
+  (let ((id (incf *array-id-counter*)))
+    (setf (gethash buffer *array-variables*)
+          (list (alexandria:format-symbol nil "STORAGE~a" id)
+                (alexandria:format-symbol nil "SIZE~a" id)))))
 
 (defun row-major-index (size subscripts)
   "Generate the code required to get the row-major position of the subscripts for an array of the given size.
@@ -71,11 +73,10 @@ This implentation is based on the \"possible definition\" in http://www.lispwork
                          for index from 0
                          collect (alexandria:format-symbol nil "RANGE~d" index)))
          (*array-variables* (make-hash-table))
-         (*reduction-size* (make-symbol "REDUCTION-SIZE")))
+         (*reduction-size* (make-symbol "REDUCTION-SIZE"))
+         (*array-id-counter* 0))
     (add-array :output)
-    (petalisp.ir:map-kernel-load-instructions
-     (lambda (instruction) (add-array (petalisp.ir:instruction-number instruction)))
-     kernel)
+    (petalisp.ir:map-kernel-inputs #'add-array kernel)
     (petalisp.ir:map-kernel-store-instructions
      (lambda (instruction)
        (push (compile-store-instruction instruction) compiled-instructions))
@@ -113,8 +114,9 @@ This implentation is based on the \"possible definition\" in http://www.lispwork
        ,@body)))
 
 (defun transform-by-instruction (input instruction)
-  (petalisp:transform input
-                      (petalisp.ir:instruction-transformation instruction)))
+  (petalisp:transform-sequence
+   input
+   (petalisp.ir:instruction-transformation instruction)))
 
 (defun compile-normal-store (instruction store-instruction)
   `(set ,(array-ref :output (transform-by-instruction *ranges* store-instruction))
@@ -129,7 +131,7 @@ This implentation is based on the \"possible definition\" in http://www.lispwork
 
 (defgeneric compile-inner-instruction (instruction)
   (:method ((load petalisp.ir:load-instruction))
-    (array-ref (petalisp.ir:instruction-number load)
+    (array-ref (petalisp.ir:load-instruction-buffer load)
                (transform-by-instruction *ranges* load)))
   (:method ((call petalisp.ir:call-instruction))
     `(,(function-name (petalisp.ir:call-instruction-operator call))

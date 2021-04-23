@@ -7,13 +7,13 @@
                                     kernel)
     (assert (= 1 (length buffers)))
     (first buffers)))
-(defun petalisp-kernel-load-instructions (kernel)
-  (let ((instructions '()))
-    (petalisp.ir:map-kernel-load-instructions
-     (lambda (instructions)
-       (push instructions instructions))
+
+(defun petalisp-kernel-inputs (kernel)
+  (let ((buffers '()))
+    (petalisp.ir:map-kernel-inputs
+     (lambda (buffer) (push buffer buffers))
      kernel)
-    (sort instructions #'< :key #'petalisp.ir:instruction-number)))
+    buffers))
 
 (defun set-kernel-array (kernel id gpu-array)
   (let ((position (+ 2 (* id 2))))
@@ -31,25 +31,17 @@
                            (gpu-kernel-program gpu-kernel)
                            "oclcl_petalisp_kernel"))
            (gpu-array
-             (gethash (petalisp.ir:buffer-storage
-                       (petalisp-kernel-output-buffer kernel))
-                       *gpu-storage-table*))
-           (load-instructions (petalisp.ir::kernel-load-instructions kernel))
+             (petalisp.ir:buffer-storage
+              (petalisp-kernel-output-buffer kernel)))
            (ranges
              (petalisp:shape-ranges
               (petalisp.ir:kernel-iteration-space kernel))))
       (set-kernel-array opencl-kernel -1 gpu-array)
-      (loop for load-instruction-number in (gpu-kernel-load-instructions gpu-kernel)
-            for load-instruction = (find load-instruction-number
-                                         load-instructions
-                                         :key #'petalisp.ir:instruction-number)
-            for load-buffer = (petalisp.ir:load-instruction-buffer
-                               load-instruction)
-            for gpu-array = (or (gethash (petalisp.ir:buffer-storage load-buffer)
-                                         *gpu-storage-table*)
-                                (array->gpu-array
-                                 backend
-                                 (petalisp.ir:buffer-storage load-buffer)))
+      (loop for load-buffer in (petalisp-kernel-inputs kernel)
+            for storage = (petalisp.ir:buffer-storage load-buffer)
+            for gpu-array = (if (arrayp storage)
+                                (array->gpu-array backend storage)
+                                storage)
             for id from 0
             do (set-kernel-array opencl-kernel id gpu-array))
       (let ((iteration-ranges ranges))
