@@ -8,6 +8,8 @@
    (device   :initarg :device   :reader oclcl-device)
    (context  :initarg :context :reader oclcl-context)
    (queue    :reader oclcl-queue)
+   (cached-gpu-memory :initform (make-hash-table :test 'equal)
+                      :reader oclcl-cached-memory)
    (kernel-cache :initform (make-hash-table) :reader oclcl-kernel-cache)))
 (defmethod initialize-instance :after ((backend oclcl-backend) &key)
   (setf (slot-value backend 'queue)
@@ -21,15 +23,29 @@
     ;; Surprisingly, compiling these things isn't too slow. We don't need this message.
     ;; (format *debug-io* "~&Compiling ~s...~%" (petalisp.ir:kernel-blueprint kernel))
     (with-standard-io-syntax 
-      (let* ((gpu-code (kernel->gpu-code kernel))
+      (let* ((*chunk-size* 16)          ; todo: scale with iteration rank?
+             (gpu-code (kernel->gpu-code kernel))
              (oclcl-code (gpu-code->oclcl-code gpu-code))
              (program (eazy-opencl.host:create-program-with-source
                        (oclcl-context backend)
                        (oclcl-info-program oclcl-code))))
-        (eazy-opencl.host:build-program program)
+        (handler-case 
+            (eazy-opencl.host:build-program program)
+          (eazy-opencl.bindings:opencl-error ()
+            (let ((buffer-length 16384))
+              (error "Compiler barfed:~%~a"
+                     (cffi:with-foreign-pointer-as-string (p 16384)
+                       (eazy-opencl.bindings:get-program-build-info
+                        program
+                        (oclcl-device backend)
+                        :program-build-log
+                        buffer-length
+                        p
+                        (cffi:null-pointer)))))))
         (make-gpu-kernel :program program
                          :load-instructions
-                         (oclcl-info-load-instructions oclcl-code))))))
+                         (oclcl-info-load-instructions oclcl-code)
+                         :chunk-size *chunk-size*)))))
 
 (defgeneric find-kernel (backend kernel)
   (:documentation "Find a GPU kernel that will run the code in the kernel KERNEL.")
@@ -59,21 +75,26 @@
                         kernel)))
 
 (defmethod petalisp.core:backend-compute ((backend oclcl-backend) (lazy-arrays list))
-  (mapcar #'gpu-array->array
-          (petalisp.scheduler:schedule-on-workers
-           lazy-arrays
-           1
-           (lambda (tasks)
-             (loop for task in tasks
-                   for kernel = (petalisp.scheduler:task-kernel task)
-                   do (execute-kernel backend kernel)))
-           (constantly nil)
-           (lambda (buffer)
-             (let* ((dimensions (mapcar #'petalisp:range-size
-                                        (petalisp:shape-ranges
-                                         (petalisp.ir:buffer-shape buffer)))))
-               (setf (petalisp.ir:buffer-storage buffer)
-                     (make-gpu-array backend dimensions))))
-           (lambda (buffer)
-             (unless (null (petalisp.ir:buffer-storage buffer))
-               (setf (petalisp.ir:buffer-storage buffer) nil))))))
+  (let ((allocated '()))
+    (prog1
+        (mapcar #'gpu-array->array
+                (petalisp.scheduler:schedule-on-workers
+                 lazy-arrays
+                 1
+                 (lambda (tasks)
+                   (loop for task in tasks
+                         for kernel = (petalisp.scheduler:task-kernel task)
+                         do (execute-kernel backend kernel)))
+                 (constantly nil)
+                 (lambda (buffer)
+                   (let* ((dimensions (mapcar #'petalisp:range-size
+                                              (petalisp:shape-ranges
+                                               (petalisp.ir:buffer-shape buffer))))
+                          (array (make-gpu-array backend dimensions)))
+                     (push array allocated)
+                     (setf (petalisp.ir:buffer-storage buffer) array)))
+                 (lambda (buffer)
+                   (unless (null (petalisp.ir:buffer-storage buffer))
+                     (setf (petalisp.ir:buffer-storage buffer) nil)))))
+      (dolist (a allocated)
+        (recycle-gpu-array backend a)))))

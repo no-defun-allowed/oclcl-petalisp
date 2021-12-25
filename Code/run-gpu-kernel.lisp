@@ -16,13 +16,29 @@
     buffers))
 
 (defun set-kernel-array (kernel id gpu-array)
-  (let ((position (+ 2 (* id 2))))
+  (let ((position (+ 3 (* id 2))))
     (eazy-opencl.host:set-kernel-arg kernel position
                                      (gpu-array-storage gpu-array)
                                      '%ocl:mem)
     (eazy-opencl.host:set-kernel-arg kernel (1+ position)
                                      (gpu-array-gpu-dimensions gpu-array)
                                      '%ocl:mem)))
+
+(defun set-iteration-limits (backend kernel iteration-ranges)
+  (cffi:with-foreign-array (limits :int
+                                   (mapcar #'petalisp:range-size
+                                           iteration-ranges))
+    (let* ((size (* *int-size* (max 1 (length iteration-ranges))))
+           (buffer (eazy-opencl.host:create-buffer (oclcl-context backend)
+                                                   :mem-read-only size)))
+      (unless (null iteration-ranges)
+        (%ocl:enqueue-write-buffer (oclcl-queue backend)
+                                   buffer
+                                   %ocl:true
+                                   0 size limits
+                                   0 (cffi:null-pointer) (cffi:null-pointer))
+        (%ocl:finish (oclcl-queue backend)))
+      (eazy-opencl.host:set-kernel-arg kernel 0 buffer '%ocl:mem))))
 
 (defgeneric execute-gpu-kernel (backend gpu-kernel kernel)
   (:method ((backend oclcl-backend) gpu-kernel kernel)
@@ -37,6 +53,7 @@
              (petalisp:shape-ranges
               (petalisp.ir:kernel-iteration-space kernel))))
       (set-kernel-array opencl-kernel -1 gpu-array)
+      (set-iteration-limits backend opencl-kernel ranges)
       (loop for load-buffer in (petalisp-kernel-inputs kernel)
             for storage = (petalisp.ir:buffer-storage load-buffer)
             for gpu-array = (if (arrayp storage)
@@ -44,11 +61,12 @@
                                 storage)
             for id from 0
             do (set-kernel-array opencl-kernel id gpu-array))
-      (let ((iteration-ranges ranges))
+      (let ((ranges (loop for range in ranges
+                          collect (ceiling (petalisp:range-size range)
+                                           (gpu-kernel-chunk-size gpu-kernel)))))
         (cffi:with-foreign-array (work '%ocl:size-t
-                                       (or (mapcar #'petalisp:range-size iteration-ranges)
-                                           (list 1)))
+                                       (if (null ranges) (list 1) ranges))
           (%ocl:enqueue-nd-range-kernel queue opencl-kernel
-                                        (max 1 (length iteration-ranges)) (cffi:null-pointer)
+                                        (max 1 (length ranges)) (cffi:null-pointer)
                                         work (cffi:null-pointer)
                                         0 (cffi:null-pointer) (cffi:null-pointer)))))))

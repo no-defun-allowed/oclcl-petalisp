@@ -6,6 +6,11 @@
   backend storage gpu-dimensions dimensions)
 
 (defun make-gpu-array (backend dimensions &optional foreign-storage)
+  #-oclcl-petalisp/do-not-zero
+  (when (and (null foreign-storage)
+             (not (null (gethash dimensions (oclcl-cached-memory backend)))))
+    (return-from make-gpu-array
+      (pop (gethash dimensions (oclcl-cached-memory backend)))))
   (let* ((size (reduce #'* dimensions))
          (context (oclcl-context backend))
          (queue (oclcl-queue backend))
@@ -41,7 +46,11 @@
                      :storage storage-device
                      :gpu-dimensions dimensions-device
                      :dimensions dimensions)))
-  
+
+(defun recycle-gpu-array (backend gpu-array)
+  (push gpu-array (gethash (gpu-array-dimensions gpu-array)
+                           (oclcl-cached-memory backend))))
+
 (defun array->gpu-array (backend array)
   (cffi:with-foreign-object (foreign-memory :float (array-total-size array))
     (dotimes (index (array-total-size array))

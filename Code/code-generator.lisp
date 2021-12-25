@@ -1,15 +1,14 @@
 (in-package :oclcl-petalisp)
 
-
 (defvar *iteration-space*)
 (defvar *ranges*)
 (defvar *array-variables*)
-(defvar *reduction-size*)
 (defvar *array-id-counter*)
+(defvar *chunk-size*)
 
-(defstruct gpu-code ranges code arrays reduction-size)
+(defstruct gpu-code code arrays)
 (defstruct oclcl-info program load-instructions)
-(defstruct gpu-kernel program load-instructions)
+(defstruct gpu-kernel program load-instructions chunk-size)
 
 (defun add-array (buffer)
   (let ((id (incf *array-id-counter*)))
@@ -40,8 +39,8 @@ This implentation is based on the \"possible definition\" in http://www.lispwork
     (symbol code)
     (number code)
     (list
-     (let ((code (mapcar #'stagger-operators code)))
-       (destructuring-bind (function &rest arguments) code
+     (destructuring-bind (function &rest arguments) code
+       (let ((arguments (mapcar #'stagger-operators arguments)))
          (case function
            ((+ - * /)
             (case (length arguments)
@@ -49,9 +48,10 @@ This implentation is based on the \"possible definition\" in http://www.lispwork
                    ((member / -) (error "~s is not defined for zero arguments" function))
                    ((+) 0)
                    ((*) 1)))
-              (1 (if (eql function '/)
-                     `(/ 1.0 ,(first arguments))
-                     (first arguments)))
+              (1 (case function
+                   ((/) `(/ 1.0 ,(first arguments)))
+                   ((-) `(- 0.0 ,(first arguments)))
+                   (otherwise (first arguments))))
               (2 (cons function arguments))
               (t (reduce (lambda (a b) (list function a b))
                          arguments :from-end t))))
@@ -66,6 +66,23 @@ This implentation is based on the \"possible definition\" in http://www.lispwork
            (t
             (cons function arguments))))))))
 
+(defun wrap-chunking (code)
+  (labels ((wrap-range (remaining-ranges)
+             (trivia:match remaining-ranges
+               ('() `(progn ,@code))
+               ((cons (list name-form index) rest)
+                `(let ((index (oclcl.lang:to-int
+                               (oclcl.lang:get-global-id ,index))))
+                   (do ((,name-form
+                         (* index ,*chunk-size*)
+                         (+ ,name-form 1)))
+                       ((>= ,name-form (min (* (+ index 1) ,*chunk-size*)
+                                            (aref limits ,index))))
+                     ,(wrap-range rest)))))))
+    (wrap-range (loop for range in *ranges*
+                      for index from 0
+                      collect (list range index)))))
+
 (defun kernel->gpu-code (kernel)
   (let* ((compiled-instructions '())
          (*iteration-space* (petalisp.ir:kernel-iteration-space kernel))
@@ -73,7 +90,6 @@ This implentation is based on the \"possible definition\" in http://www.lispwork
                          for index from 0
                          collect (alexandria:format-symbol nil "RANGE~d" index)))
          (*array-variables* (make-hash-table))
-         (*reduction-size* (make-symbol "REDUCTION-SIZE"))
          (*array-id-counter* 0))
     (add-array :output)
     (petalisp.ir:map-kernel-inputs #'add-array kernel)
@@ -85,23 +101,19 @@ This implentation is based on the \"possible definition\" in http://www.lispwork
       ;; Ensure that the output buffer is first
       (make-gpu-code :arrays (cons (find :output arrays :key #'first)
                                    (remove :output arrays :key #'first))
-                     :code `(let ,(loop for range in *ranges*
-                                        for index from 0
-                                        collect `(,range
-                                                  (oclcl.lang:to-int
-                                                   (oclcl.lang:get-global-id ,index))))
-                              ,@compiled-instructions)
-                     :ranges (rest *ranges*)
-                     :reduction-size *reduction-size*))))
+                     :code (wrap-chunking compiled-instructions)))))
 
 (defun gpu-code->oclcl-code (gpu-code)
   (let ((oclcl:*program* (oclcl:make-program :name "Petalisp program")))
+    (add-primops)
     (oclcl:program-define-function oclcl:*program*
                                    'kernel
                                    'oclcl:void
-                                   (loop for (id storage size) in (gpu-code-arrays gpu-code)
-                                         collect (list storage 'oclcl:float*)
-                                         collect (list size 'oclcl:int*))
+                                   (cons
+                                    '(limits oclcl:int*)
+                                    (loop for (id storage size) in (gpu-code-arrays gpu-code)
+                                          collect (list storage 'oclcl:float*)
+                                          collect (list size 'oclcl:int*)))
                                    (list (stagger-operators (gpu-code-code gpu-code))))
     (make-oclcl-info :program (oclcl:compile-program oclcl:*program*)
                      :load-instructions (remove :output (mapcar #'first (gpu-code-arrays gpu-code))))))
@@ -134,24 +146,37 @@ This implentation is based on the \"possible definition\" in http://www.lispwork
     (array-ref (petalisp.ir:load-instruction-buffer load)
                (transform-by-instruction *ranges* load)))
   (:method ((call petalisp.ir:call-instruction))
-    `(,(function-name (petalisp.ir:call-instruction-operator call))
-      ,@(loop for input in (petalisp.ir:instruction-inputs call)
-              collect (with-input (input input)
-                        (compile-inner-instruction input)))))
+    (cond
+      ((and (symbolp (petalisp.ir:call-instruction-operator call))
+            (string= (petalisp.ir:call-instruction-operator call)
+                     "COERCE-TO-SHORT-FLOAT"))
+       (with-input (input (first (petalisp.ir:instruction-inputs call)))
+         (compile-inner-instruction input)))
+      (t
+       `(,(function-name (petalisp.ir:call-instruction-operator call))
+         ,@(loop for input in (petalisp.ir:instruction-inputs call)
+                 collect (with-input (input input)
+                           (compile-inner-instruction input)))))))
   (:method ((iref petalisp.ir:iref-instruction))
     `(oclcl.lang:to-float ,(first (transform-by-instruction *ranges* iref)))))
 
 (defun function-name (function)
   (etypecase function
     (symbol
-     (if (eq (symbol-package function)
-             (find-package "PETALISP.TYPE-INFERENCE"))
-         (let ((name (symbol-name function)))
-           (cond
-             ((alexandria:starts-with-subseq "SHORT-FLOAT" name)
-              (intern (subseq name 11) "CL"))
-             (t (error "unknown type-inference symbol ~s" function))))
-         function))
+     (cond
+       ((eq (symbol-package function)
+            (find-package "PETALISP.TYPE-INFERENCE"))
+        (let ((name (symbol-name function)))
+          (cond
+            ((and (alexandria:starts-with-subseq "SHORT-FLOAT-" name)
+                  (string/= "SHORT-FLOAT-" name))
+             (function-name (intern (subseq name (length "SHORT-FLOAT-")) "CL")))
+            ((alexandria:starts-with-subseq "SHORT-FLOAT" name)
+             (function-name (intern (subseq name (length "SHORT-FLOAT")) "CL")))
+            (t (error "unknown type-inference symbol ~s" function)))))
+       ((member function *patch-cl-functions* :key #'car)
+        (cdr (assoc function *patch-cl-functions*)))
+       (t function)))
     (function
      (multiple-value-bind (expression closure? name)
          (function-lambda-expression function)
