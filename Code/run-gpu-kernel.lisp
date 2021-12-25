@@ -15,14 +15,17 @@
      kernel)
     buffers))
 
+(defun %set-kernel-mem-arg (kernel index value)
+  (cffi:with-foreign-object (p '%ocl:mem)
+    (setf (cffi:mem-ref p '%ocl:mem) value)
+    (%ocl/e:set-kernel-arg kernel index #.(cffi:foreign-type-size '%ocl:mem) p)))
+
 (defun set-kernel-array (kernel id gpu-array)
   (let ((position (+ 3 (* id 2))))
-    (eazy-opencl.host:set-kernel-arg kernel position
-                                     (gpu-array-storage gpu-array)
-                                     '%ocl:mem)
-    (eazy-opencl.host:set-kernel-arg kernel (1+ position)
-                                     (gpu-array-gpu-dimensions gpu-array)
-                                     '%ocl:mem)))
+    (%set-kernel-mem-arg kernel position
+                         (gpu-array-storage gpu-array))
+    (%set-kernel-mem-arg kernel (1+ position)
+                         (gpu-array-gpu-dimensions gpu-array))))
 
 (defun set-iteration-limits (backend kernel iteration-ranges)
   (cffi:with-foreign-array (limits :int
@@ -38,7 +41,7 @@
                                    0 size limits
                                    0 (cffi:null-pointer) (cffi:null-pointer))
         (%ocl:finish (oclcl-queue backend)))
-      (eazy-opencl.host:set-kernel-arg kernel 0 buffer '%ocl:mem))))
+      (%set-kernel-mem-arg kernel 0 buffer))))
 
 (defgeneric execute-gpu-kernel (backend gpu-kernel kernel)
   (:method ((backend oclcl-backend) gpu-kernel kernel)

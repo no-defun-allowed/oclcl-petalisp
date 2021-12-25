@@ -23,7 +23,7 @@
     ;; Surprisingly, compiling these things isn't too slow. We don't need this message.
     ;; (format *debug-io* "~&Compiling ~s...~%" (petalisp.ir:kernel-blueprint kernel))
     (with-standard-io-syntax 
-      (let* ((*chunk-size* 16)          ; todo: scale with iteration rank?
+      (let* ((*chunk-size* 32)          ; todo: scale with iteration rank?
              (gpu-code (kernel->gpu-code kernel))
              (oclcl-code (gpu-code->oclcl-code gpu-code))
              (program (eazy-opencl.host:create-program-with-source

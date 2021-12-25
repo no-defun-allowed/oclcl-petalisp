@@ -52,6 +52,11 @@
                            (oclcl-cached-memory backend))))
 
 (defun array->gpu-array (backend array)
+  #+sbcl
+  (when (typep array '(simple-array single-float))
+    (return-from array->gpu-array
+      (cffi:with-pointer-to-vector-data (p (sb-ext:array-storage-vector array))
+        (make-gpu-array backend (array-dimensions array) p))))
   (cffi:with-foreign-object (foreign-memory :float (array-total-size array))
     (dotimes (index (array-total-size array))
       (setf (cffi:mem-aref foreign-memory :float index)
@@ -63,16 +68,23 @@
   (let ((backend (gpu-array-backend gpu-array))
         (full-size (reduce #'* (gpu-array-dimensions gpu-array)))
         (array (make-array (gpu-array-dimensions gpu-array) :element-type 'single-float)))
-    (cffi:with-foreign-object (foreign-memory :float full-size)
-      (%ocl:enqueue-read-buffer (oclcl-queue backend)
-                                (gpu-array-storage gpu-array)
-                                %ocl:true 0 (* *float-size* full-size)
-                                foreign-memory
-                                0 (cffi:null-pointer) (cffi:null-pointer))
-      (%ocl:finish (oclcl-queue backend))
-      (dotimes (index full-size)
-        (setf (row-major-aref array index)
-              (cffi:mem-aref foreign-memory :float index)))
+    (symbol-macrolet ((do-the-read
+                          (%ocl:enqueue-read-buffer
+                           (oclcl-queue backend)
+                           (gpu-array-storage gpu-array)
+                           %ocl:true 0 (* *float-size* full-size)
+                           foreign-memory
+                           0 (cffi:null-pointer) (cffi:null-pointer))))
+      #+sbcl
+      (cffi:with-pointer-to-vector-data (foreign-memory (sb-ext:array-storage-vector array))
+        do-the-read)
+      #-sbcl
+      (cffi:with-foreign-object (foreign-memory :float full-size)
+        do-the-read
+        (%ocl:finish (oclcl-queue backend))
+        (dotimes (index full-size)
+          (setf (row-major-aref array index)
+                (cffi:mem-aref foreign-memory :float index))))
       array)))
 
 (defmethod print-object ((gpu-array gpu-array) stream)
