@@ -5,12 +5,29 @@
 (defstruct (gpu-array (:constructor %make-gpu-array))
   backend storage gpu-dimensions dimensions)
 
-(defun make-gpu-array (backend dimensions &optional foreign-storage)
+(defstruct allocation-meters
+  (allocated 0)
+  (reused 0))
+
+(defun make-gpu-array (backend dimensions &key foreign-storage)
+  ;; Try to grab unused arrays first.
   #-oclcl-petalisp/do-not-zero
-  (when (and (null foreign-storage)
-             (not (null (gethash dimensions (oclcl-cached-memory backend)))))
-    (return-from make-gpu-array
-      (pop (gethash dimensions (oclcl-cached-memory backend)))))
+  (unless (null (gethash dimensions (oclcl-cached-memory backend)))
+    (incf (allocation-meters-reused (oclcl-allocation-meters backend)))
+    (let ((gpu-array
+            (pop (gethash dimensions (oclcl-cached-memory backend)))))
+      (push gpu-array *allocated*)
+      (unless (null foreign-storage)
+        (let ((queue (oclcl-queue backend))
+              (size  (reduce #'* dimensions))
+              (storage-device (gpu-array-storage gpu-array)))
+          (%ocl:enqueue-write-buffer queue storage-device %ocl:true
+                                     0 (* *float-size* size) foreign-storage
+                                     0 (cffi:null-pointer) (cffi:null-pointer))
+          (%ocl:finish queue)))
+      (return-from make-gpu-array gpu-array)))
+  (print dimensions)
+  (incf (allocation-meters-allocated (oclcl-allocation-meters backend)))
   (let* ((size (reduce #'* dimensions))
          (context (oclcl-context backend))
          (queue (oclcl-queue backend))
@@ -42,10 +59,13 @@
                                        0 (* *float-size* size) foreign-storage
                                        0 (cffi:null-pointer) (cffi:null-pointer))))
       (%ocl:finish queue))
-    (%make-gpu-array :backend backend
-                     :storage storage-device
-                     :gpu-dimensions dimensions-device
-                     :dimensions dimensions)))
+    (let ((gpu-array
+            (%make-gpu-array :backend backend
+                             :storage storage-device
+                             :gpu-dimensions dimensions-device
+                             :dimensions dimensions)))
+      (push gpu-array *allocated*)
+      gpu-array)))
 
 (defun recycle-gpu-array (backend gpu-array)
   (push gpu-array (gethash (gpu-array-dimensions gpu-array)
@@ -56,13 +76,12 @@
   (when (typep array '(simple-array single-float))
     (return-from array->gpu-array
       (cffi:with-pointer-to-vector-data (p (sb-ext:array-storage-vector array))
-        (make-gpu-array backend (array-dimensions array) p))))
+        (make-gpu-array backend (array-dimensions array) :foreign-storage p))))
   (cffi:with-foreign-object (foreign-memory :float (array-total-size array))
     (dotimes (index (array-total-size array))
       (setf (cffi:mem-aref foreign-memory :float index)
             (coerce (row-major-aref array index) 'single-float)))
-    (make-gpu-array backend (array-dimensions array) foreign-memory)))
-    
+    (make-gpu-array backend (array-dimensions array) :foreign-storage foreign-memory)))
 
 (defun gpu-array->array (gpu-array)
   (let ((backend (gpu-array-backend gpu-array))
@@ -92,3 +111,11 @@
     (format stream "~_:Dimensions ~s ~_:Storage ~s"
             (gpu-array-dimensions gpu-array)
             (gpu-array->array gpu-array))))
+
+(defvar *allocated*)
+(defmacro with-allocation-pool ((backend) &body body)
+  `(let ((*allocated* '()))
+     (multiple-value-prog1
+         (progn ,@body)
+       (dolist (a *allocated*)
+         (recycle-gpu-array ,backend a)))))

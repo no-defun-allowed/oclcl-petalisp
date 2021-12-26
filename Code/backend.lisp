@@ -10,7 +10,9 @@
    (queue    :reader oclcl-queue)
    (cached-gpu-memory :initform (make-hash-table :test 'equal)
                       :reader oclcl-cached-memory)
-   (kernel-cache :initform (make-hash-table) :reader oclcl-kernel-cache)))
+   (kernel-cache :initform (make-hash-table) :reader oclcl-kernel-cache)
+   (allocation-meters :initform (make-allocation-meters)
+                      :reader oclcl-allocation-meters)))
 (defmethod initialize-instance :after ((backend oclcl-backend) &key)
   (setf (slot-value backend 'queue)
         (#-opencl-2.0 eazy-opencl.host:create-command-queue
@@ -75,26 +77,22 @@
                         kernel)))
 
 (defmethod petalisp.core:backend-compute ((backend oclcl-backend) (lazy-arrays list))
-  (let ((allocated '()))
-    (prog1
-        (mapcar #'gpu-array->array
-                (petalisp.scheduler:schedule-on-workers
-                 lazy-arrays
-                 1
-                 (lambda (tasks)
-                   (loop for task in tasks
-                         for kernel = (petalisp.scheduler:task-kernel task)
-                         do (execute-kernel backend kernel)))
-                 (constantly nil)
-                 (lambda (buffer)
-                   (let* ((dimensions (mapcar #'petalisp:range-size
-                                              (petalisp:shape-ranges
-                                               (petalisp.ir:buffer-shape buffer))))
-                          (array (make-gpu-array backend dimensions)))
-                     (push array allocated)
-                     (setf (petalisp.ir:buffer-storage buffer) array)))
-                 (lambda (buffer)
-                   (unless (null (petalisp.ir:buffer-storage buffer))
-                     (setf (petalisp.ir:buffer-storage buffer) nil)))))
-      (dolist (a allocated)
-        (recycle-gpu-array backend a)))))
+  (with-allocation-pool (backend)
+    (mapcar #'gpu-array->array
+            (petalisp.scheduler:schedule-on-workers
+             lazy-arrays
+             1
+             (lambda (tasks)
+               (loop for task in tasks
+                     for kernel = (petalisp.scheduler:task-kernel task)
+                     do (execute-kernel backend kernel)))
+             (constantly nil)
+             (lambda (buffer)
+               (let* ((dimensions (mapcar #'petalisp:range-size
+                                          (petalisp:shape-ranges
+                                           (petalisp.ir:buffer-shape buffer))))
+                      (array (make-gpu-array backend dimensions)))
+                 (setf (petalisp.ir:buffer-storage buffer) array)))
+             (lambda (buffer)
+               (unless (null (petalisp.ir:buffer-storage buffer))
+                 (setf (petalisp.ir:buffer-storage buffer) nil)))))))
